@@ -2236,13 +2236,26 @@ textarea:focus-visible,
 }
 
 .trace-register-grid {
-  grid-template-columns: minmax(260px, 1.35fr) repeat(4, minmax(130px, 1fr));
+  grid-template-columns: minmax(320px, 1.6fr) repeat(4, minmax(120px, 1fr));
 }
 
 .trace-lead {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.trace-lead > div {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.trace-lead-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .trace-lead-icon {
