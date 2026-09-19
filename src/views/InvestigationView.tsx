@@ -9,7 +9,6 @@ import type {
   Transaction,
   VASPCluster
 } from "../types";
-import type { DrawerState } from "../components/layout/DrawerPanel";
 import { mockApi } from "../services/mockApi";
 import { Badge } from "../components/common/Badge";
 import { KpiBanner } from "../components/common/KpiBanner";
@@ -17,6 +16,7 @@ import { FundFlowGraph } from "../components/graph/FundFlowGraph";
 import { GraphInspector } from "../components/graph/GraphInspector";
 import { RapidFlowStrip } from "../components/graph/RapidFlowStrip";
 import { SkeletonLoader, ErrorNotice } from "../components/common/StateFeedback";
+import { formatInr, formatWallet, formatTechnicalId } from "../utils/formatters";
 
 interface InvestigationViewProps {
   activeCase: Case;
@@ -85,25 +85,11 @@ export function InvestigationView({ activeCase, setDrawer, openTransaction }: In
     return () => { active = false; };
   }, [activeCase.case_id]);
 
-  const visibleEdges = (graph?.edges ?? []).filter((e) => e.hop <= hopFilter);
+  const visibleEdges = (graph?.edges ?? []).filter((edge) => edge.hop <= hopFilter);
   const displayedEdges = revealedEdgeCount === null ? visibleEdges : visibleEdges.slice(0, revealedEdgeCount);
-
-  // Live transaction playback loop
-  useEffect(() => {
-    if (!transactions.length) return;
-    const timer = window.setInterval(() => {
-      setFlowIndex((curr) => (curr + 1) % transactions.length);
-    }, 1600);
-    return () => window.clearInterval(timer);
-  }, [transactions.length]);
-
   const activeFlowTx = transactions.length ? transactions[flowIndex % transactions.length] : null;
   const activeFlowEdge = activeFlowTx
-    ? visibleEdges.find(
-        (edge) =>
-          activeFlowTx.tx_hash.includes(edge.tx_hash.replace("...", "").slice(0, 5)) ||
-          edge.tx_hash.includes(activeFlowTx.tx_hash.slice(0, 5))
-      )
+    ? visibleEdges.find((edge) => activeFlowTx.tx_hash.includes(edge.tx_hash.replace("...", "").slice(0, 5)) || edge.tx_hash.includes(activeFlowTx.tx_hash.slice(0, 5)))
     : undefined;
 
   const runTrace = async () => {
@@ -128,41 +114,35 @@ export function InvestigationView({ activeCase, setDrawer, openTransaction }: In
     setRunningStage("READY · PARTIAL COVERAGE");
   };
 
+  const selectNode = (node: GraphNode) => {
+    setSelectedGraphItem(node.id);
+    setDrawer({ kind: "node", node });
+  };
+
+  const selectEdge = async (edge: GraphEdge) => {
+    setSelectedGraphItem(edge.id);
+    const tx = edge.tx_hash.startsWith("HEURISTIC") ? undefined : (await mockApi.getTransaction(edge.tx_hash)).data;
+    setDrawer({ kind: "edge", edge, tx });
+  };
+
   if (loading) return <SkeletonLoader text="Initializing bounded graph and typology intelligence..." />;
   if (error) return <ErrorNotice message={error} />;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      {/* Case Header Ribbon */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "18px 24px",
-        borderRadius: "var(--r-lg)",
-        background: "var(--elev-1)",
-        border: "1px solid var(--line)"
-      }}>
+    <div className="view-stack investigation-view">
+      <section className="case-context-band">
         <div>
-          <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--accent-2)" }}>
-            Investigation Workstation
-          </span>
-          <h2 style={{ margin: "4px 0 0", fontSize: "20px", color: "var(--text)" }}>
-            {activeCase.case_id} · <span style={{ color: "var(--text-2)" }}>{activeCase.fraud_type}</span>
-          </h2>
-          <p className="mono" style={{ margin: "4px 0 0", fontSize: "12.5px", color: "var(--accent-2)" }}>
-            Reported Wallet: {activeCase.reported_wallet}
-          </p>
+          <span className="section-kicker text-accent">Investigation Workstation</span>
+          <h2>{activeCase.case_id} · <span className="table-muted">{activeCase.fraud_type.replace(/_/g, " ")}</span></h2>
+          <p className="mono text-accent">Reported Wallet: {formatWallet(activeCase.reported_wallet)}</p>
         </div>
-
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+        <div className="inline-cluster">
           <Badge tone={activeCase.source_badge}>{activeCase.source_badge}</Badge>
           <Badge tone="partial">{activeCase.data_coverage}</Badge>
           <span className="badge neutral">Deterministic Target</span>
         </div>
-      </div>
+      </section>
 
-      {/* Signature Kestrel Points / KPI Banner */}
       <KpiBanner
         reportedWallet={activeCase.reported_wallet}
         caseId={activeCase.case_id}
@@ -172,313 +152,112 @@ export function InvestigationView({ activeCase, setDrawer, openTransaction }: In
         traceCoverage={trace?.coverage || "PARTIAL"}
       />
 
-      {/* Streaming Flow Strip */}
       <RapidFlowStrip
         rows={transactions}
         activeIndex={flowIndex}
+        onSelect={setFlowIndex}
         onOpen={openTransaction}
+        isPlaying={false}
       />
 
-      {/* Bounded Trace Scope & Graph Area */}
-      <div className="kestrel-grid-3">
-        {/* Left Controls */}
-        <div>
-          <div className="kestrel-panel" style={{ height: "100%", display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div className="investigation-workbench">
+        <div className="trace-controls">
+          <section className="kestrel-panel trace-control-panel">
             <div className="kestrel-panel-head">
-              <div>
-                <h2>Bounded Trace Scope</h2>
-                <p>Stage: {runningStage}</p>
-              </div>
+              <div><h2>Bounded Trace Scope</h2><p>Stage: {runningStage}</p></div>
               <Badge tone={isTracing ? "amber" : "green"}>{isTracing ? "TRACING" : "READY"}</Badge>
             </div>
 
-            {/* Trace Limits Grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-              <label className="form-label">
-                Max Hops
-                <input
-                  type="number"
-                  className="form-input"
-                  value={limits.max_hops}
-                  onChange={(e) => setLimits({ ...limits, max_hops: Number(e.target.value) })}
-                />
-              </label>
-
-              <label className="form-label">
-                Window Hours
-                <input
-                  type="number"
-                  className="form-input"
-                  value={limits.time_window_hours}
-                  onChange={(e) => setLimits({ ...limits, time_window_hours: Number(e.target.value) })}
-                />
-              </label>
-
-              <label className="form-label">
-                Min INR Floor
-                <input
-                  type="number"
-                  className="form-input"
-                  value={limits.minimum_value_inr}
-                  onChange={(e) => setLimits({ ...limits, minimum_value_inr: Number(e.target.value) })}
-                />
-              </label>
-
-              <label className="form-label">
-                Max Outflows
-                <input
-                  type="number"
-                  className="form-input"
-                  value={limits.max_outflows}
-                  onChange={(e) => setLimits({ ...limits, max_outflows: Number(e.target.value) })}
-                />
-              </label>
-
-              <label className="form-label">
-                Max Nodes
-                <input
-                  type="number"
-                  className="form-input"
-                  value={limits.max_nodes}
-                  onChange={(e) => setLimits({ ...limits, max_nodes: Number(e.target.value) })}
-                />
-              </label>
-
-              <label className="form-label">
-                Timeout Sec
-                <input
-                  type="number"
-                  className="form-input"
-                  value={limits.timeout_seconds}
-                  onChange={(e) => setLimits({ ...limits, timeout_seconds: Number(e.target.value) })}
-                />
-              </label>
+            <div className="trace-limit-grid">
+              <label className="form-label">Max Hops<input type="number" className="form-input" value={limits.max_hops} onChange={(e) => setLimits({ ...limits, max_hops: Number(e.target.value) })} /></label>
+              <label className="form-label">Window Hours<input type="number" className="form-input" value={limits.time_window_hours} onChange={(e) => setLimits({ ...limits, time_window_hours: Number(e.target.value) })} /></label>
+              <label className="form-label">Min INR Floor<input type="number" className="form-input" value={limits.minimum_value_inr} onChange={(e) => setLimits({ ...limits, minimum_value_inr: Number(e.target.value) })} /></label>
+              <label className="form-label">Max Outflows<input type="number" className="form-input" value={limits.max_outflows} onChange={(e) => setLimits({ ...limits, max_outflows: Number(e.target.value) })} /></label>
+              <label className="form-label">Max Nodes<input type="number" className="form-input" value={limits.max_nodes} onChange={(e) => setLimits({ ...limits, max_nodes: Number(e.target.value) })} /></label>
+              <label className="form-label">Timeout Sec<input type="number" className="form-input" value={limits.timeout_seconds} onChange={(e) => setLimits({ ...limits, timeout_seconds: Number(e.target.value) })} /></label>
             </div>
 
-            {/* Hop Filter Slider */}
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "var(--text-2)", marginBottom: "6px" }}>
-                <span>Graph Hop Filter</span>
-                <strong className="mono" style={{ color: "var(--accent-2)" }}>≤ {hopFilter} hops</strong>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="6"
-                value={hopFilter}
-                onChange={(e) => setHopFilter(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--accent)" }}
-              />
+            <div className="range-control">
+              <div className="range-control-head"><span>Graph Hop Filter</span><strong className="mono text-accent">≤ {hopFilter} hops</strong></div>
+              <input type="range" min="1" max="6" value={hopFilter} onChange={(e) => setHopFilter(Number(e.target.value))} />
             </div>
 
-            {/* Actions */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "auto" }}>
-              <button className="btn-primary" disabled={isTracing} onClick={runTrace}>
-                {isTracing ? "Executing Bounded Trace..." : "Run Bounded Trace"}
-              </button>
-
-              {/* Trace Receipt */}
+            <div className="action-stack">
+              <button className="btn-primary" disabled={isTracing} onClick={() => void runTrace()}>{isTracing ? "Executing Bounded Trace..." : "Run Bounded Trace"}</button>
               {trace && (
-                <div style={{
-                  padding: "14px",
-                  borderRadius: "var(--r-md)",
-                  background: "var(--elev-2)",
-                  border: "1px solid var(--line)",
-                  fontSize: "12px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "6px"
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: "var(--text-3)" }}>Nodes / Edges</span>
-                    <strong>{trace.node_count} nodes · {trace.edge_count} edges</strong>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: "var(--text-3)" }}>Max Depth</span>
-                    <strong>{trace.max_depth_reached} hops</strong>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: "var(--text-3)" }}>Termination</span>
-                    <Badge tone="amber">{trace.termination_reason}</Badge>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ color: "var(--text-3)" }}>Coverage</span>
-                    <Badge tone="partial">{trace.coverage}</Badge>
-                  </div>
+                <div className="trace-receipt">
+                  <div className="metric-line"><span>Nodes / Edges</span><strong>{trace.node_count} nodes · {trace.edge_count} edges</strong></div>
+                  <div className="metric-line"><span>Max Depth</span><strong>{trace.max_depth_reached} hops</strong></div>
+                  <div className="metric-line"><span>Termination</span><Badge tone="amber">{trace.termination_reason}</Badge></div>
+                  <div className="metric-line"><span>Coverage</span><Badge tone="partial">{trace.coverage}</Badge></div>
                 </div>
               )}
             </div>
-          </div>
+          </section>
         </div>
 
-        {/* Right Fund-Flow Graph Area */}
-        <div style={{ gridColumn: "span 2" }}>
-          <div className="kestrel-panel" style={{ padding: "0", overflow: "hidden" }}>
+        <div className="graph-workbench-center">
+          <section className="kestrel-panel">
             <FundFlowGraph
               nodes={graph?.nodes ?? []}
               edges={displayedEdges}
               selectedId={selectedGraphItem}
               activeEdgeId={activeFlowEdge?.id}
-              onNode={(node) => {
-                setSelectedGraphItem(node.id);
-                setDrawer({ kind: "node", node });
-              }}
-              onEdge={async (edge) => {
-                setSelectedGraphItem(edge.id);
-                const tx = edge.tx_hash.startsWith("HEURISTIC")
-                  ? undefined
-                  : (await mockApi.getTransaction(edge.tx_hash)).data;
-                setDrawer({ kind: "edge", edge, tx });
-              }}
+              onNode={selectNode}
+              onEdge={selectEdge}
             />
-          </div>
+          </section>
+        </div>
 
+        <div className="graph-workbench-inspector">
           <GraphInspector
             nodes={graph?.nodes ?? []}
             edges={displayedEdges}
             selectedId={selectedGraphItem}
             activeEdgeId={activeFlowEdge?.id}
-            onNode={(node) => {
-              setSelectedGraphItem(node.id);
-              setDrawer({ kind: "node", node });
-            }}
-            onEdge={async (edge) => {
-              setSelectedGraphItem(edge.id);
-              const tx = edge.tx_hash.startsWith("HEURISTIC")
-                ? undefined
-                : (await mockApi.getTransaction(edge.tx_hash)).data;
-              setDrawer({ kind: "edge", edge, tx });
-            }}
+            onNode={selectNode}
+            onEdge={selectEdge}
           />
         </div>
       </div>
 
-      {/* Intelligence Triad: Typologies, VASP, Recommendations */}
-      <div className="kestrel-grid-3">
-        {/* Typologies */}
-        <div className="kestrel-panel">
-          <div className="kestrel-panel-head">
-            <div>
-              <h2>Typology Detection</h2>
-              <p>Rule-versioned fraud behavioral indicators</p>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            {typologies.slice(0, 5).map((f) => (
-              <button
-                key={f.finding_id}
-                onClick={() => setDrawer({ kind: "finding", finding: f })}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "6px",
-                  padding: "12px 14px",
-                  borderRadius: "var(--r-md)",
-                  background: "var(--elev-2)",
-                  border: "1px solid var(--line)",
-                  textAlign: "left"
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <strong style={{ fontSize: "13.5px", color: "var(--text)" }}>{f.pattern_type}</strong>
-                  {f.india_specific && <Badge tone="india">India Pattern</Badge>}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "var(--text-3)" }}>
-                  <span>Confidence: <strong style={{ color: "var(--gold)" }}>{f.confidence}</strong></span>
-                  <span className="mono">{f.rule_version}</span>
-                </div>
+      <div className="kestrel-grid-3 intelligence-grid">
+        <section className="kestrel-panel">
+          <div className="kestrel-panel-head"><div><h2>Typology Detection</h2><p>Rule-versioned fraud behavioral indicators</p></div></div>
+          <div className="stack-list">
+            {typologies.slice(0, 5).map((finding) => (
+              <button key={finding.finding_id} className="list-item-button" onClick={() => setDrawer({ kind: "finding", finding })}>
+                <div className="list-item-head"><strong>{finding.pattern_type}</strong>{finding.india_specific && <Badge tone="india">India Pattern</Badge>}</div>
+                <div className="list-item-meta"><span>Confidence: <strong className="text-gold">{finding.confidence}</strong></span><span className="mono">{finding.rule_version}</span></div>
               </button>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* VASP Candidates */}
-        <div className="kestrel-panel">
-          <div className="kestrel-panel-head">
-            <div>
-              <h2>VASP Intelligence</h2>
-              <p>Candidate exit clustering (not ownership proof)</p>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <section className="kestrel-panel">
+          <div className="kestrel-panel-head"><div><h2>VASP Intelligence</h2><p>Candidate exit clustering, not ownership proof</p></div></div>
+          <div className="stack-list">
             {vasps.map((candidate) => (
-              <button
-                key={candidate.candidate_id}
-                onClick={() => setDrawer({ kind: "vasp", candidate })}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "12px 14px",
-                  borderRadius: "var(--r-md)",
-                  background: "var(--elev-2)",
-                  border: "1px solid var(--line)",
-                  textAlign: "left"
-                }}
-              >
-                <div>
-                  <strong style={{ display: "block", fontSize: "13.5px", color: "var(--text)" }}>{candidate.name}</strong>
-                  <span className="mono" style={{ fontSize: "11px", color: "var(--text-3)" }}>{candidate.address.slice(0, 12)}...</span>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <Badge tone={candidate.label_status.toLowerCase()}>{candidate.label_status}</Badge>
-                  <span style={{ display: "block", fontSize: "11px", color: "var(--accent-2)", marginTop: "4px" }}>
-                    {Math.round(candidate.confidence * 100)}% · hop {candidate.hop_distance}
-                  </span>
-                </div>
+              <button key={candidate.candidate_id} className="list-item-button list-item-split" onClick={() => setDrawer({ kind: "vasp", candidate })}>
+                <div><strong>{candidate.name}</strong><span className="mono table-muted">{formatTechnicalId(candidate.address, 12, 4)}</span></div>
+                <div className="list-item-align-right"><Badge tone={candidate.label_status.toLowerCase()}>{candidate.label_status}</Badge><span className="text-accent">{Math.round(candidate.confidence * 100)}% · hop {candidate.hop_distance}</span></div>
               </button>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* Recommendations */}
-        <div className="kestrel-panel">
-          <div className="kestrel-panel-head">
-            <div>
-              <h2>Advisory Actions</h2>
-              <p>Recommended investigative follow-ups</p>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <section className="kestrel-panel">
+          <div className="kestrel-panel-head"><div><h2>Advisory Actions</h2><p>Recommended investigative follow-ups</p></div></div>
+          <div className="stack-list">
             {recommendations.map((rec) => (
-              <article
-                key={rec.recommendation_id}
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: "var(--r-md)",
-                  background: "var(--elev-2)",
-                  border: "1px solid var(--line)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "6px"
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <strong style={{ fontSize: "13.5px", color: "var(--text)" }}>{rec.title}</strong>
-                  <Badge tone={rec.priority === "HIGH" ? "red" : "amber"}>{rec.priority}</Badge>
-                </div>
-                <p style={{ margin: 0, fontSize: "12.5px", color: "var(--text-2)", lineHeight: "1.4" }}>
-                  {rec.reason}
-                </p>
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "4px" }}>
-                  {rec.evidence_references.map((ref: string) => (
-                    <button
-                      key={ref}
-                      onClick={() => openTransaction(ref)}
-                      className="mono"
-                      style={{ fontSize: "11px", color: "var(--accent-2)", background: "var(--elev-1)", padding: "2px 8px", borderRadius: "4px" }}
-                    >
-                      {ref} ↗
-                    </button>
-                  ))}
-                </div>
+              <article key={rec.recommendation_id} className="list-item-card">
+                <div className="list-item-head"><strong>{rec.title}</strong><Badge tone={rec.priority === "HIGH" ? "red" : "amber"}>{rec.priority}</Badge></div>
+                <p>{rec.reason}</p>
+                <div className="reference-list">{rec.evidence_references.map((ref: string) => <button key={ref} className="mono" onClick={() => void openTransaction(ref)}>{ref} ↗</button>)}</div>
               </article>
             ))}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

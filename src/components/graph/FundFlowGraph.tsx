@@ -30,15 +30,7 @@ export function FundFlowGraph({
   const positions = computeCircularPositions(graphNodes, edges, center);
 
   return (
-    <div className={`graph-shell ${fullScreen ? "fullscreen-graph" : ""}`} style={fullScreen ? {
-      position: "fixed",
-      inset: "20px",
-      zIndex: 100,
-      boxShadow: "0 0 100px rgba(0,0,0,0.95)",
-      borderRadius: "var(--r-lg)",
-      display: "flex",
-      flexDirection: "column"
-    } : {}}>
+    <div className={`graph-shell ${fullScreen ? "fullscreen-graph" : ""}`}>
       <div className="graph-toolbar">
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <span className="badge green">CIRCULAR TOPOLOGY</span>
